@@ -1,4 +1,4 @@
-"""Tomogram reconstruction, subtomogram reconstruction, and subtilt extraction for cryo-ET."""
+"""(sub-)Tomogram reconstruction, subtilt extraction for cryo-ET."""
 
 from importlib.metadata import PackageNotFoundError, version
 
@@ -6,5 +6,9 @@ try:
     __version__ = version("torch-tomogram")
 except PackageNotFoundError:
     __version__ = "uninstalled"
-__author__ = "Talley Lambert"
-__email__ = "talley.lambert@gmail.com"
+__author__ = "Marten Chaillet"
+__email__ = "martenchaillet@gmail.com"
+
+from torch_tomogram.tomogram import Tomogram
+
+__all__ = ["Tomogram"]

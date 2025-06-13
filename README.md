@@ -6,4 +6,4 @@
 [![CI](https://github.com/tlambert03/torch-tomogram/actions/workflows/ci.yml/badge.svg)](https://github.com/tlambert03/torch-tomogram/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/tlambert03/torch-tomogram/branch/main/graph/badge.svg)](https://codecov.io/gh/tlambert03/torch-tomogram)
 
-Tomogram reconstruction, subtomogram reconstruction, and subtilt extraction for cryo-ET.
+(sub-)Tomogram reconstruction, subtilt extraction for cryo-ET.
