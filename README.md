@@ -7,28 +7,3 @@
 [![codecov](https://codecov.io/gh/tlambert03/torch-tomogram/branch/main/graph/badge.svg)](https://codecov.io/gh/tlambert03/torch-tomogram)
 
 Tomogram reconstruction, subtomogram reconstruction, and subtilt extraction for cryo-ET.
-
-## Development
-
-The easiest way to get started is to use the [github cli](https://cli.github.com)
-and [uv](https://docs.astral.sh/uv/getting-started/installation/):
-
-```sh
-gh repo fork tlambert03/torch-tomogram --clone
-# or just
-# gh repo clone tlambert03/torch-tomogram
-cd torch-tomogram
-uv sync
-```
-
-Run tests:
-
-```sh
-uv run pytest
-```
-
-Lint files:
-
-```sh
-uv run pre-commit run --all-files
-```
