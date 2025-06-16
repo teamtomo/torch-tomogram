@@ -24,6 +24,7 @@ class Tomogram:
         self.tilt_angles = torch.tensor(tilt_angles).float()
         self.tilt_axis_angle = torch.tensor(tilt_axis_angle).float()
         self.sample_translations = torch.tensor(sample_translations).float()
+        self._pad_factor = 2.0
 
     @property
     def projection_matrices(self) -> torch.Tensor:
@@ -73,14 +74,19 @@ class Tomogram:
         point_zyx = point_zyx.reshape((-1, 3))
         rotation_matrices = self.projection_matrices[:, :3, :3]
         rotation_matrices = torch.linalg.pinv(rotation_matrices)
+        sidelength_padded = int(self._pad_factor * sidelength)
         particle_tilt_series = self.extract_particle_tilt_series(
-            point_zyx, sidelength=sidelength
+            point_zyx, sidelength=sidelength_padded
         )
         volume = backproject_2d_to_3d(
             images=particle_tilt_series[0],
             rotation_matrices=rotation_matrices,
             zyx_matrices=True,
+            pad_factor=1.0,  # we already incorporate padding in subtilts
+            fftfreq_max=0.5,
         )
+        p = (sidelength_padded - sidelength) // 2
+        volume = F.pad(volume, [-p] * 6)  # remove padding
         return volume
 
     def reconstruct_tomogram(
