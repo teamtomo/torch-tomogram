@@ -50,12 +50,11 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest", "pytest-cov"]
 dev = [
-    { include-group = "test" },
     "ipython",
     "mypy",
-    "pdbpp",  # https://github.com/pdbpp/pdbpp
-    "pre-commit-uv",
-    "rich",  # https://github.com/Textualize/rich
+    "pdbpp", # https://github.com/pdbpp/pdbpp
+    "pre-commit",
+    "rich", # https://github.com/Textualize/rich
     "ruff",
 ]
 
