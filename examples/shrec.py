@@ -6,7 +6,6 @@ import einops
 import mrcfile
 import napari
 import torch
-import torch.nn.functional as F
 from torch_fourier_rescale import fourier_rescale_2d
 
 from torch_tomogram import Tomogram
@@ -47,10 +46,8 @@ if __name__ == "__main__":
         sample_translations=shifts * -1,
     )  # invert the shifts because we employ a forward projection model!
 
-    volume = tomogram.reconstruct_tomogram((256, 512, 512), 256)
-    # crop to match SHREC grand_model
-    pad = (256 - 180) // 2
-    volume = F.pad(volume, (0, 0, 0, 0, -pad, -pad))
+    # 180 is the box size of the grand model
+    volume = tomogram.reconstruct_tomogram((180, 512, 512), 128)
 
     with mrcfile.open(model_folder / "grandmodel.mrc", permissive=True) as mrc:
         ground_truth = mrc.data

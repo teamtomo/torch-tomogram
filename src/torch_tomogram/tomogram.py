@@ -110,10 +110,14 @@ class Tomogram:
                     zyx = torch.tensor([_z, _y, _x]).float()
                     subvolume = self.reconstruct_subvolume(zyx, sidelength=sidelength)
                     _d, _h, _w = zyx + torch.tensor(volume_shape) // 2
-                    print(_d, _h, _w)
                     _d, _h, _w = int(_d), int(_h), int(_w)
-                    d_min, d_max = _d - r, _d + r
-                    h_min, h_max = _h - r, _h + r
-                    w_min, w_max = _w - r, _w + r
-                    tomogram[d_min:d_max, h_min:h_max, w_min:w_max] = subvolume
+                    d_min, d_max = _d - r, min(_d + r, d)
+                    h_min, h_max = _h - r, min(_h + r, h)
+                    w_min, w_max = _w - r, min(_w + r, w)
+                    d_max_sub = d_max - d_min
+                    h_max_sub = h_max - h_min
+                    w_max_sub = w_max - w_min
+                    tomogram[d_min:d_max, h_min:h_max, w_min:w_max] = subvolume[
+                        :d_max_sub, :h_max_sub, :w_max_sub
+                    ]
         return tomogram
