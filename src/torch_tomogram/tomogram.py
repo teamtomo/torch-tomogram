@@ -18,12 +18,12 @@ class Tomogram:
         tilt_angles: torch.Tensor,
         tilt_axis_angle: torch.Tensor,
         sample_translations: torch.Tensor,
-        images: torch.Tensor | None = None,  # (b, h, w)
+        images: torch.Tensor,  # (b, h, w)
     ):
-        self.images = torch.tensor(images).float()
-        self.tilt_angles = torch.tensor(tilt_angles).float()
-        self.tilt_axis_angle = torch.tensor(tilt_axis_angle).float()
-        self.sample_translations = torch.tensor(sample_translations).float()
+        self.images = torch.as_tensor(images).float()
+        self.tilt_angles = torch.as_tensor(tilt_angles).float()
+        self.tilt_axis_angle = torch.as_tensor(tilt_axis_angle).float()
+        self.sample_translations = torch.as_tensor(sample_translations).float()
         self._pad_factor = 2.0
 
     @property
@@ -42,7 +42,7 @@ class Tomogram:
         - points are positions relative to center of tomogram
         - projected 2D points are relative to center of 2D image
         """
-        points_zyx = torch.tensor(points_zyx).float()
+        points_zyx = torch.as_tensor(points_zyx).float()
         M_yx = self.projection_matrices[..., [1, 2], :]  # (ntilts, 2, 4)
         points_zyxw = homogenise_coordinates(points_zyx)
         projected_yx = M_yx @ einops.rearrange(
@@ -70,7 +70,7 @@ class Tomogram:
         self, point_zyx: torch.Tensor, sidelength: int
     ) -> torch.Tensor:
         """Reconstruct a subvolume at a 3D location in the sample."""
-        point_zyx = torch.tensor(point_zyx).float()
+        point_zyx = torch.as_tensor(point_zyx).float()
         point_zyx = point_zyx.reshape((-1, 3))
         rotation_matrices = self.projection_matrices[:, :3, :3]
         rotation_matrices = torch.linalg.pinv(rotation_matrices)
