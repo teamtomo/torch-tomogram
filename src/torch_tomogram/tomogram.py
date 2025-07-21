@@ -19,21 +19,33 @@ class Tomogram:
         tilt_axis_angle: torch.Tensor,
         sample_translations: torch.Tensor,
         images: torch.Tensor,  # (b, h, w)
+        device: torch.device | str = "cpu",
     ):
-        self.images = torch.as_tensor(images).float()
-        self.tilt_angles = torch.as_tensor(tilt_angles).float()
-        self.tilt_axis_angle = torch.as_tensor(tilt_axis_angle).float()
-        self.sample_translations = torch.as_tensor(sample_translations).float()
+        self.images = torch.as_tensor(images, device=device).float()
+        self.tilt_angles = torch.as_tensor(tilt_angles, device=device).float()
+        self.tilt_axis_angle = torch.as_tensor(tilt_axis_angle, device=device).float()
+        self.sample_translations = torch.as_tensor(
+            sample_translations, device=device
+        ).float()
+        self.device = device
         self._pad_factor = 2.0
 
     @property
     def projection_matrices(self) -> torch.Tensor:
         """Matrices that project points from 3D -> 2D."""
         shifts_3d = F.pad(self.sample_translations, (1, 0), value=0)
-        r0 = Ry(self.tilt_angles, zyx=True)
-        r1 = Rz(self.tilt_axis_angle, zyx=True)
-        t2 = T(shifts_3d)
+        r0 = Ry(self.tilt_angles, zyx=True, device=self.device)
+        r1 = Rz(self.tilt_axis_angle, zyx=True, device=self.device)
+        t2 = T(shifts_3d, device=self.device)
         return t2 @ r1 @ r0
+
+    def to(self, device: torch.device | str) -> None:
+        """Move all objects of the tomogram to the device."""
+        self.device = device
+        self.images = self.images.to(device)
+        self.tilt_angles = self.tilt_angles.to(device)
+        self.tilt_axis_angle = self.tilt_axis_angle.to(device)
+        self.sample_translations = self.sample_translations.to(device)
 
     def project_points(self, points_zyx: torch.Tensor) -> torch.Tensor:
         """Project points from 3D to 2D.
@@ -42,7 +54,7 @@ class Tomogram:
         - points are positions relative to center of tomogram
         - projected 2D points are relative to center of 2D image
         """
-        points_zyx = torch.as_tensor(points_zyx).float()
+        points_zyx = torch.as_tensor(points_zyx, device=self.device).float()
         M_yx = self.projection_matrices[..., [1, 2], :]  # (ntilts, 2, 4)
         points_zyxw = homogenise_coordinates(points_zyx)
         projected_yx = M_yx @ einops.rearrange(
@@ -58,7 +70,9 @@ class Tomogram:
     ) -> torch.Tensor:
         """Extract a subtilt-series at a 3D location in the sample."""
         projected_yx = self.project_points(points_zyx)
-        projected_yx += dft_center(self.images.shape[-2:], rfft=False, fftshift=True)
+        projected_yx += dft_center(
+            self.images.shape[-2:], rfft=False, fftshift=True, device=self.device
+        )
         images = subpixel_crop_2d(
             image=self.images,
             positions=projected_yx,
@@ -70,7 +84,7 @@ class Tomogram:
         self, point_zyx: torch.Tensor, sidelength: int
     ) -> torch.Tensor:
         """Reconstruct a subvolume at a 3D location in the sample."""
-        point_zyx = torch.as_tensor(point_zyx).float()
+        point_zyx = torch.as_tensor(point_zyx, device=self.device).float()
         point_zyx = point_zyx.reshape((-1, 3))
         rotation_matrices = self.projection_matrices[:, :3, :3]
         rotation_matrices = torch.linalg.pinv(rotation_matrices)
@@ -102,7 +116,9 @@ class Tomogram:
         x = torch.arange(start=r, end=w + r, step=sidelength) - w // 2
 
         # allocate whole volume
-        tomogram = torch.zeros(size=volume_shape, dtype=torch.float32)
+        tomogram = torch.zeros(
+            size=volume_shape, dtype=torch.float32, device=self.device
+        )
 
         for _z in z:
             for _y in y:

@@ -1,10 +1,10 @@
 """Example of reconstruction with SHREC'21 data."""
 
+import time
 from pathlib import Path
 
 import einops
 import mrcfile
-import napari
 import torch
 from torch_fourier_rescale import fourier_rescale_2d
 
@@ -39,20 +39,23 @@ if __name__ == "__main__":
     tilt_axis_angle = 0.0
     n_tilts = len(tilt_angles)
 
+    start = time.time()
     tomogram = Tomogram(
         images=tilt_series,
         tilt_angles=tilt_angles,
         tilt_axis_angle=tilt_axis_angle,
         sample_translations=shifts * -1,
+        device="cuda",
     )  # invert the shifts because we employ a forward projection model!
 
     # 180 is the box size of the grand model
     volume = tomogram.reconstruct_tomogram((180, 512, 512), 128)
+    print(time.time() - start)
 
     with mrcfile.open(model_folder / "grandmodel.mrc", permissive=True) as mrc:
         ground_truth = mrc.data
 
-    viewer = napari.Viewer()
-    viewer.add_image(ground_truth, name="ground_truth")
-    viewer.add_image(volume.numpy(), name="reconstruction")
-    napari.run()
+    # viewer = napari.Viewer()
+    # viewer.add_image(ground_truth, name="ground_truth")
+    # viewer.add_image(volume.cpu().numpy(), name="reconstruction")
+    # napari.run()
