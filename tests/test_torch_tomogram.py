@@ -8,6 +8,35 @@ if torch.cuda.is_available():
     DEVICES.append("cuda")
 
 
+@pytest.mark.skipif(
+    not torch.cuda.is_available(), reason="can only move device with CUDA support"
+)
+def test_device_move():
+    """Test that tensors can move to other device."""
+    tilt_angles = torch.tensor([-30.0, 0.0, 30.0])
+    tilt_axis_angle = torch.tensor(0.0)
+    sample_translations = torch.zeros((3, 2))  # 3 tilts, 2D translations
+    images = torch.zeros((3, 10, 10))  # 3 tilts, 10x10 images
+
+    # Initialize tomogram
+    tomogram = Tomogram(
+        tilt_angles=tilt_angles,
+        tilt_axis_angle=tilt_axis_angle,
+        sample_translations=sample_translations,
+        images=images,
+    )
+    assert "cpu" == str(tomogram.images.device)
+
+    tomogram.to("cuda")
+
+    # Check shape and type
+    assert "cuda" in str(tomogram.images.device)
+    assert "cuda" in str(tomogram.device)
+    assert "cuda" in str(tomogram.tilt_angles.device)
+    assert "cuda" in str(tomogram.tilt_axis_angle.device)
+    assert "cuda" in str(tomogram.sample_translations.device)
+
+
 @pytest.mark.parametrize(
     "device",
     DEVICES,
