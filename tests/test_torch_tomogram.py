@@ -26,6 +26,7 @@ def test_projection_matrices(device):
         tilt_axis_angle=tilt_axis_angle,
         sample_translations=sample_translations,
         images=images,
+        device=device,
     )
 
     # Get projection matrices
@@ -34,7 +35,7 @@ def test_projection_matrices(device):
     # Check shape and type
     assert matrices.shape == (3, 4, 4)  # 3 tilts, 4x4 matrices
     assert matrices.dtype == torch.float32
-    assert str(matrices.device) == "cpu"
+    assert device in str(matrices.device)
 
 
 @pytest.mark.parametrize(
@@ -59,7 +60,7 @@ def test_project_points(device):
     )
 
     # Create a single 3D point at the origin
-    points_zyx = torch.tensor([[0.0, 0.0, 0.0]])
+    points_zyx = torch.tensor([[0.0, 0.0, 0.0]], device=device)
 
     # Project the point
     projected_yx = tomogram.project_points(points_zyx)
@@ -67,11 +68,13 @@ def test_project_points(device):
     # Check shape and type
     assert projected_yx.shape == (1, 3, 2)  # 1 point, 3 tilts, 2D coordinates
     assert projected_yx.dtype == torch.float32
-    assert str(projected_yx.device) == "cpu"
+    assert device in str(projected_yx.device)
 
     # For a point at the origin with no translations, the y-coordinate should be 0
     # for all tilts, and the x-coordinate should depend on the tilt angle
-    assert torch.allclose(projected_yx[0, :, 0], torch.tensor([0.0, 0.0, 0.0]))
+    assert torch.allclose(
+        projected_yx[0, :, 0], torch.tensor([0.0, 0.0, 0.0], device=device)
+    )
 
 
 @pytest.mark.parametrize(

@@ -34,9 +34,9 @@ class Tomogram:
     def projection_matrices(self) -> torch.Tensor:
         """Matrices that project points from 3D -> 2D."""
         shifts_3d = F.pad(self.sample_translations, (1, 0), value=0)
-        r0 = Ry(self.tilt_angles, zyx=True)
-        r1 = Rz(self.tilt_axis_angle, zyx=True)
-        t2 = T(shifts_3d)
+        r0 = Ry(self.tilt_angles, zyx=True, device=self.device)
+        r1 = Rz(self.tilt_axis_angle, zyx=True, device=self.device)
+        t2 = T(shifts_3d, device=self.device)
         return t2 @ r1 @ r0
 
     def to(self, device: torch.device | str) -> None:
