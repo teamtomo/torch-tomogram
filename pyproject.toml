@@ -38,7 +38,7 @@ classifiers = [
 dependencies = [
     "numpy",
     "einops",
-    "torch",  # limit torch version for compatibility with GPU-runner
+    "torch",
     "torch-fourier-slice",
     "torch-grid-utils>=0.0.8",
     "torch-affine-utils",
