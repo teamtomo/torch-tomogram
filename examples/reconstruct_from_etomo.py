@@ -20,7 +20,7 @@ df = df.loc[~df['excluded']].reset_index(drop=True)
 
 # Extract 2x2 transformation matrices from etomo data
 m = df.loc[:, ['xf_a11', 'xf_a12', 'xf_a21', 'xf_a22']].to_numpy().reshape(-1, 2, 2)
-# Invert matrices to convert from IMOD's backward to forward model
+# Invert matrices so that the shifts are inverted upon multiplication
 m = np.linalg.inv(m)
 
 # Transform shifts from IMOD's coordinate system to torch-tomogram's
