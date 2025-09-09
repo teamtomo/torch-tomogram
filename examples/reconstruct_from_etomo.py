@@ -8,7 +8,8 @@ from torch_tomogram import Tomogram
 # Read etomo alignment data
 ETOMO_DIR = Path("/home/marten/data/datasets/apoferritin/TS_1/")
 df = etomofiles.read(ETOMO_DIR)
-
+# Filter out excluded tilts
+df = df.loc[~df['excluded']].reset_index(drop=True)
 # Convert IMOD's backward projection model to torch-tomogram's forward model
 # IMOD: image -> sample
 #   > the 2d matrix from the .xf file represents a 2d transform to align
@@ -36,7 +37,9 @@ corrected_shifts = np.ascontiguousarray(corrected_shifts)
 # Load and normalize tilt stack
 tilt_stack_path = ETOMO_DIR / df.image_path[0].replace('[0]', '')
 tilt_stack = mrcfile.read(tilt_stack_path)
-# Zero-mean, unit-variance normalization per image
+# Filter stack to only included tilts
+tilt_stack = tilt_stack_full[df.idx_tilt.to_numpy()]
+#Zero-mean, unit-variance normalization per image
 tilt_stack -= np.mean(tilt_stack, axis=(-2, -1), keepdims=True)
 tilt_stack /= np.std(tilt_stack, axis=(-2, -1), keepdims=True)
 
