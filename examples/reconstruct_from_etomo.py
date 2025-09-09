@@ -36,7 +36,7 @@ corrected_shifts = np.ascontiguousarray(corrected_shifts)
 
 # Load and normalize tilt stack
 tilt_stack_path = ETOMO_DIR / df.image_path[0].replace('[0]', '')
-tilt_stack = mrcfile.read(tilt_stack_path)
+tilt_stack_full = mrcfile.read(tilt_stack_path)
 # Filter stack to only included tilts
 tilt_stack = tilt_stack_full[df.idx_tilt.to_numpy()]
 #Zero-mean, unit-variance normalization per image
