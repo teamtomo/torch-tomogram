@@ -6,10 +6,17 @@ from torch_tomogram import Tomogram
 
 
 # Read etomo alignment data
-ETOMO_DIR = Path("/home/marten/data/datasets/apoferritin/TS_1/")
+ETOMO_DIR = Path("/path/to/etomo/dir")
+
 df = etomofiles.read(ETOMO_DIR)
 # Filter out excluded tilts
 df = df.loc[~df['excluded']].reset_index(drop=True)
+
+# Get IMOD xf components from dataframe
+# df_to_xf(df, yx=True) returns (n_tilts, 2, 3) array
+# Each matrix is [[A22, A21, DY], [A12, A11, DX]] (ready for torch-tomogram yz) 
+xf = etomofiles.df_to_xf(df, yx=True)
+m, shifts = xf[:, :, :2], xf[:, :, 2]
 # Convert IMOD's backward projection model to torch-tomogram's forward model
 # IMOD: image -> sample
 #   > the 2d matrix from the .xf file represents a 2d transform to align
@@ -17,21 +24,12 @@ df = df.loc[~df['excluded']].reset_index(drop=True)
 # torch-tomogram: sample -> image
 #   > the shifts are applied after rotation and projection and shift the
 #   > projected sample to the image position
-
-# Extract 2x2 transformation matrices from etomo data
-m = df.loc[:, ['xf_a11', 'xf_a12', 'xf_a21', 'xf_a22']].to_numpy().reshape(-1, 2, 2)
-# Invert matrices so that the shifts are inverted upon multiplication
-m = np.linalg.inv(m)
-
-# Transform shifts from IMOD's coordinate system to torch-tomogram's
-shifts = df.loc[:, ['xf_dx', 'xf_dy']].to_numpy()
-# Apply inverse transformation to get post-projection shifts
-corrected_shifts = np.einsum('nij,nj->ni', m, shifts)
-# Negate shifts for forward projection model
-corrected_shifts = corrected_shifts * -1
-
-# Convert from IMOD's (x,y) to torch-tomogram's (y,x) convention
-corrected_shifts = np.flip(corrected_shifts, axis=1)
+#
+#  Roation matrix are orthogonal, so inversion = transposition :
+#  np.einsum('nij,nj->ni', np.linalg.inv(m), shifts) = np.einsum('nji,nj->ni', m, shifts) 
+#
+#  Negate shifts for forward projection model
+corrected_shifts = -np.einsum('nji,nj->ni', m, shifts)
 corrected_shifts = np.ascontiguousarray(corrected_shifts)
 
 # Load and normalize tilt stack
@@ -50,6 +48,6 @@ tilt_series = Tomogram(
     tilt_axis_angle=df.tilt_axis_angle,
     sample_translations=corrected_shifts.copy()
 )
-tomogram = tilt_series.reconstruct_tomogram((100, 480, 342), 128)
+tomogram = tilt_series.reconstruct_tomogram((100, 480, 380), 128)
 
 mrcfile.write(ETOMO_DIR / 'tt_rec.mrc', tomogram.numpy(), overwrite=True, voxel_size=10)
