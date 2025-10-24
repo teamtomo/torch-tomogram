@@ -6,7 +6,7 @@ from torch_tomogram import Tomogram
 
 
 # Read etomo alignment data
-ETOMO_DIR = Path("/home/marten/data/datasets/apoferritin/TS_1/")
+ETOMO_DIR = Path("/path/to/etomo/dir")
 
 df = etomofiles.read(ETOMO_DIR)
 # Filter out excluded tilts
