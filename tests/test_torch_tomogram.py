@@ -133,15 +133,22 @@ def test_extract_particle_tilt_series(device):
     # Create a single 3D point at the origin
     points_zyx = torch.tensor([[0.0, 0.0, 0.0]], device=device)
 
-    # Extract particle tilt series
+    # Extract particle tilt series in real space
     particle_tilt_series = tomogram.extract_particle_tilt_series(
-        points_zyx, sidelength=8
+        points_zyx, sidelength=8, return_rfft=False
     )
 
     # Check shape and type
     assert particle_tilt_series.shape == (1, 3, 8, 8)  # 1 point, 3 tilts, 8x8 images
     assert particle_tilt_series.dtype == torch.float32
     assert device in str(particle_tilt_series.device)
+    
+    # Also test Fourier space extraction
+    particle_tilt_series_rfft = tomogram.extract_particle_tilt_series(
+        points_zyx, sidelength=8, return_rfft=True
+    )
+    assert particle_tilt_series_rfft.shape == (1, 3, 8, 5)  # rfft: width = 8//2 + 1 = 5
+    assert particle_tilt_series_rfft.dtype == torch.complex64
 
 
 @pytest.mark.parametrize(
