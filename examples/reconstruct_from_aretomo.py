@@ -1,41 +1,42 @@
 import alnfile
 import mrcfile
-import numpy as np
+import torch
 from pathlib import Path
 from torch_tomogram import Tomogram
 
-# Paths
-ALN_PATH = Path('/Path/to/your/alnfile.aln')
-TILT_STACK_PATH = Path('/Path/to/your/raw/tilt_stack.ts_ext')
 
-# Read AreTomo alignment data
+# Paths to AreTomo alignment file and raw tilt stack
+ALN_PATH = Path("/path/to/your/alignment.aln")
+TILT_STACK_PATH = Path("/path/to/your/tilt_stack.mrc")
+
+# Choose device
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Pixel spacing in Angstroms (required)
+# AreTomo .aln files contain shifts in pixels, this converts them to Angstroms
+PIXEL_SPACING = 6.192
+
+# Read AreTomo alignment data and add tilt stack path to dataframe
 df = alnfile.read(ALN_PATH)
+df['image_path'] = str(TILT_STACK_PATH)
 
-# Get shifts for reconstruction 
-# In aretomo, tx and ty already represent the shifts in the forward projection model (sample -> image) 
-corrected_shifts_t_xy = df[['tx', 'ty']].to_numpy()
-corrected_shifts_t_yx = corrected_shifts_t_xy[:, ::-1].copy() #yx
+# Load tilt series from dataframe
+tilt_series = Tomogram.from_aretomo_output(
+    df=df,
+    pixel_spacing=PIXEL_SPACING,
+    device=DEVICE,
+)
 
-# Load tilt stack
-tilt_stack_full = mrcfile.read(TILT_STACK_PATH)
+# Reconstruct tomogram
+volume_shape = (512, 512, 512)
+sidelength = 128
+tomogram = tilt_series.reconstruct_tomogram(volume_shape, sidelength)
 
-included_indices = df['sec'].values - 1  # 0-indexed section indices
-tilt_stack = tilt_stack_full[included_indices]
-
-# Normalize
-tilt_stack -= np.mean(tilt_stack, axis=(-2, -1), keepdims=True)
-tilt_stack /= np.std(tilt_stack, axis=(-2, -1), keepdims=True) 
-
-# Build tomogram and reconstruct
-tilt_series = Tomogram(
-    images=tilt_stack,
-    tilt_angles=df['tilt'].to_numpy(),
-    tilt_axis_angle=df['rot'].to_numpy(), 
-    sample_translations=corrected_shifts_xf.copy()
-) 
-
-tomogram = tilt_series.reconstruct_tomogram((100, 480, 320), 128)
-
-# Save tomogram
-out_path = ALN_PATH.parent / 'tt_rec.mrc'
-mrcfile.write(out_path, tomogram.numpy(), overwrite=True, voxel_size=10)
+# Save as MRC file
+output_path = ALN_PATH.parent / 'torch_tomogram_reconstruction.mrc'
+mrcfile.write(
+    output_path,
+    tomogram.cpu().numpy(),
+    overwrite=True,
+    voxel_size=PIXEL_SPACING,
+)

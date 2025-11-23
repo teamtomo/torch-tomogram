@@ -1,53 +1,46 @@
 import etomofiles
 import mrcfile
-import numpy as np
+import torch
 from pathlib import Path
 from torch_tomogram import Tomogram
 
 
-# Read etomo alignment data
+# Path to ETOMO project directory
 ETOMO_DIR = Path("/path/to/etomo/dir")
 
+# Choose device: "cpu" or "cuda" 
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Pixel spacing in Angstroms (required)
+PIXEL_SPACING = 6.192
+
+# Read ETOMO alignment data
 df = etomofiles.read(ETOMO_DIR)
-# Filter out excluded tilts
-df = df.loc[~df['excluded']].reset_index(drop=True)
 
-# Get IMOD xf components from dataframe
-# df_to_xf(df, yx=True) returns (n_tilts, 2, 3) array
-# Each matrix is [[A22, A21, DY], [A12, A11, DX]] (ready for torch-tomogram yz) 
-xf = etomofiles.df_to_xf(df, yx=True)
-m, shifts = xf[:, :, :2], xf[:, :, 2]
-# Convert IMOD's backward projection model to torch-tomogram's forward model
-# IMOD: image -> sample
-#   > the 2d matrix from the .xf file represents a 2d transform to align
-#   > the image with the tilt-axis
-# torch-tomogram: sample -> image
-#   > the shifts are applied after rotation and projection and shift the
-#   > projected sample to the image position
-#
-#  Roation matrix are orthogonal, so inversion = transposition :
-#  np.einsum('nij,nj->ni', np.linalg.inv(m), shifts) = np.einsum('nji,nj->ni', m, shifts) 
-#
-#  Negate shifts for forward projection model
-corrected_shifts = -np.einsum('nji,nj->ni', m, shifts)
-corrected_shifts = np.ascontiguousarray(corrected_shifts)
-
-# Load and normalize tilt stack
-tilt_stack_path = ETOMO_DIR / df.image_path[0].replace('[0]', '')
-tilt_stack_full = mrcfile.read(tilt_stack_path)
-# Filter stack to only included tilts
-tilt_stack = tilt_stack_full[df.idx_tilt.to_numpy()]
-#Zero-mean, unit-variance normalization per image
-tilt_stack -= np.mean(tilt_stack, axis=(-2, -1), keepdims=True)
-tilt_stack /= np.std(tilt_stack, axis=(-2, -1), keepdims=True)
-
-# Create tomogram object and reconstruct
-tilt_series = Tomogram(
-    images=tilt_stack,
-    tilt_angles=df.tlt,
-    tilt_axis_angle=df.tilt_axis_angle,
-    sample_translations=corrected_shifts.copy()
+# Update image paths to be relative to current working directory (or absolute)
+# etomofiles returns paths relative to the etomo directory
+df['image_path'] = df['image_path'].apply(
+    lambda p: str(ETOMO_DIR / p.split('[')[0]) + '[' + p.split('[')[1]
 )
-tomogram = tilt_series.reconstruct_tomogram((100, 480, 380), 128)
 
-mrcfile.write(ETOMO_DIR / 'tt_rec.mrc', tomogram.numpy(), overwrite=True, voxel_size=10)
+# Load tilt series from dataframe
+tilt_series = Tomogram.from_etomo_directory(
+    df=df,
+    pixel_spacing=PIXEL_SPACING,
+    device=DEVICE,
+)
+
+# Reconstruct tomogram
+volume_shape = (512, 512, 512)
+sidelength = 128
+tomogram = tilt_series.reconstruct_tomogram(volume_shape, sidelength)
+
+# Save as MRC file
+output_path = ETOMO_DIR / 'torch_tomogram_reconstruction.mrc'
+mrcfile.write(
+    output_path,
+    tomogram.cpu().numpy(),
+    overwrite=True,
+    voxel_size=PIXEL_SPACING,
+)
+
