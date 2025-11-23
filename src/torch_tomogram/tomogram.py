@@ -7,6 +7,7 @@ import alnfile
 import mrcfile
 import einops
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch_affine_utils import homogenise_coordinates
@@ -25,7 +26,7 @@ class Tomogram:
         tilt_axis_angle: torch.Tensor,
         sample_translations: torch.Tensor,
         images: torch.Tensor,  # (b, h, w)
-        pixel_spacing: float | None = None,
+        pixel_spacing: float,
         device: torch.device | str = "cpu",
     ):
         self.images = torch.as_tensor(images, device=device).float()
@@ -40,46 +41,43 @@ class Tomogram:
     
     @property
     def sample_translations_px(self) -> torch.Tensor:
-        """Get sample translations in pixels.
-        
-        If pixel_spacing was provided, converts from Angstroms to pixels.
-        Otherwise, returns the translations as-is (already in pixels).
-        """
-        if self.pixel_spacing is not None:
-            return self.sample_translations / self.pixel_spacing
-        return self.sample_translations
+        return self.sample_translations/self.pixel_spacing
 
     @classmethod
-    def from_aretomo_aln(
+    def from_aretomo_output(
         cls,
-        aln_path: Path | str,
-        tilt_stack_path: Path | str,
-        pixel_spacing: float | None = None,
+        df: pd.DataFrame,
+        pixel_spacing: float,
         device: torch.device | str = "cpu",
     ) -> "Tomogram":
-        """Initialize Tomogram from AreTomo alignment file and tilt stack."""
-
-        aln_path = Path(aln_path)
-        tilt_stack_path = Path(tilt_stack_path)
-        df = alnfile.read(aln_path)
+        """Initialize Tomogram from AreTomo dataframe."""
+        
+        # Extract XY shifts and convert to YX convention
         corrected_shifts_xy = df[["tx", "ty"]].to_numpy()
         corrected_shifts_yx = corrected_shifts_xy[:, ::-1].copy()
         
-        # Convert shifts to Angstroms if pixel_spacing provided
-        if pixel_spacing is not None:
-            corrected_shifts_yx = corrected_shifts_yx * pixel_spacing
+        # Convert shifts from pixels to Angstroms
+        corrected_shifts_yx_ang = corrected_shifts_yx * pixel_spacing
         
+        # Load tilt stack and extract valid tilts
+        tilt_stack_path = df['image_path'].iloc[0]
         tilt_stack_full = mrcfile.read(tilt_stack_path)
-        included_indices = df["sec"].values - 1 
-        tilt_stack = tilt_stack_full[included_indices]
+        idx_valid = df["sec"].values - 1  # Convert from 1-indexed to 0-indexed
+        tilt_stack = tilt_stack_full[idx_valid]
         tilt_stack = tilt_stack.astype(np.float32)
-        tilt_stack -= np.mean(tilt_stack, axis=(-2, -1), keepdims=True)
-        tilt_stack /= np.std(tilt_stack, axis=(-2, -1), keepdims=True)
+        
+        # Normalize on central 25% crop to avoid edge artifacts
+        h, w = tilt_stack.shape[-2:]
+        h_crop = slice(int(0.375 * h), int(0.625 * h))
+        w_crop = slice(int(0.375 * w), int(0.625 * w))
+        crop = tilt_stack[:, h_crop, w_crop]
+        tilt_stack -= np.mean(crop, axis=(-2, -1), keepdims=True)
+        tilt_stack /= np.std(crop, axis=(-2, -1), keepdims=True)
         return cls(
             images=tilt_stack,
             tilt_angles=df["tilt"].to_numpy(),
             tilt_axis_angle=df["rot"].to_numpy(),
-            sample_translations=corrected_shifts_yx,
+            sample_translations=corrected_shifts_yx_ang,
             pixel_spacing=pixel_spacing,
             device=device,
         )
@@ -87,34 +85,54 @@ class Tomogram:
     @classmethod
     def from_etomo_directory(
         cls,
-        etomo_dir: Path | str,
-        pixel_spacing: float | None = None,
+        df: pd.DataFrame,
+        pixel_spacing: float,
         device: torch.device | str = "cpu",
     ) -> "Tomogram":
         """Initialize Tomogram from ETOMO directory."""
-
-        etomo_dir = Path(etomo_dir)
-        df = etomofiles.read(etomo_dir)
         df = df.loc[~df["excluded"]].reset_index(drop=True)
+        # Get IMOD xf components from dataframe
+        # df_to_xf(df, yx=True) returns (n_tilts, 2, 3) array
+        # Each matrix is [[A22, A21, DY], [A12, A11, DX]] (ready for torch-tomogram yz) 
         xf = etomofiles.df_to_xf(df, yx=True)
         m, shifts = xf[:, :, :2], xf[:, :, 2]
-        corrected_shifts = -np.einsum("nji,nj->ni", m, shifts)
+        # Convert IMOD's backward projection model to torch-tomogram's forward model
+        # IMOD: image -> sample
+        #   > the 2d matrix from the .xf file represents a 2d transform to align
+        #   > the images so that they represent projections of a solid body tilted around the Y axis
+        # torch-tomogram: sample -> image
+        #   > the shifts are applied after rotation and projection and shift the
+        #   > projected sample to the image position
+        #
+        #  Roation matrix are orthogonal, so inversion = transposition :
+        #  np.einsum('nij,nj->ni', np.linalg.inv(m), shifts) = np.einsum('nji,nj->ni', m, shifts) 
+        #
+        #  Negate shifts for forward projection model
+        corrected_shifts = -np.einsum('nji,nj->ni', m, shifts)
         corrected_shifts = np.ascontiguousarray(corrected_shifts)
-        # Convert shifts to Angstroms if pixel_spacing is available
-        if pixel_spacing is not None:
-            corrected_shifts = corrected_shifts * pixel_spacing
-        tilt_stack_path = etomo_dir / df.image_path[0].replace("[0]", "")
+        
+        # Convert shifts from pixels to Angstroms
+        corrected_shifts_ang = corrected_shifts * pixel_spacing
+        
+        # Load tilt stack
+        tilt_stack_path = df['image_path'][0].replace("[0]", "")
         tilt_stack_full = mrcfile.read(tilt_stack_path)
-        tilt_stack = tilt_stack_full[df.idx_tilt.to_numpy()]
+        tilt_stack = tilt_stack_full[df['idx_tilt'].to_numpy()]
         tilt_stack = tilt_stack.astype(np.float32)
-        tilt_stack -= np.mean(tilt_stack, axis=(-2, -1), keepdims=True)
-        tilt_stack /= np.std(tilt_stack, axis=(-2, -1), keepdims=True)
+        
+        # Normalize on central 25% crop to avoid edge artifacts
+        h, w = tilt_stack.shape[-2:]
+        h_crop = slice(int(0.375 * h), int(0.625 * h))
+        w_crop = slice(int(0.375 * w), int(0.625 * w))
+        crop = tilt_stack[:, h_crop, w_crop]
+        tilt_stack -= np.mean(crop, axis=(-2, -1), keepdims=True)
+        tilt_stack /= np.std(crop, axis=(-2, -1), keepdims=True)
 
         return cls(
             images=tilt_stack,
-            tilt_angles=df.tlt.to_numpy(),
-            tilt_axis_angle=df.tilt_axis_angle.to_numpy(),
-            sample_translations=corrected_shifts,
+            tilt_angles=df['tlt'].to_numpy(),
+            tilt_axis_angle=df['tilt_axis_angle'].to_numpy(),
+            sample_translations=corrected_shifts_ang,
             pixel_spacing=pixel_spacing,
             device=device,
         )
@@ -137,15 +155,20 @@ class Tomogram:
         self.sample_translations = self.sample_translations.to(device)
 
     def project_points(self, points_zyx: torch.Tensor) -> torch.Tensor:
-        """Project points from 3D to 2D.
+        """Project 3D points to 2D image coordinates.
 
         - points are 3D zyx coordinates
         - points are positions relative to center of tomogram
         - projected 2D points are relative to center of 2D image
         """
         points_zyx = torch.as_tensor(points_zyx, device=self.device).float()
+        
+        # Convert from Angstroms to pixels for projection
+        points_zyx_px = points_zyx / self.pixel_spacing
+        
+        # Apply projection matrices
         M_yx = self.projection_matrices[..., [1, 2], :]  # (ntilts, 2, 4)
-        points_zyxw = homogenise_coordinates(points_zyx)
+        points_zyxw = homogenise_coordinates(points_zyx_px)
         projected_yx = M_yx @ einops.rearrange(
             points_zyxw, "nparticles zyxw -> nparticles 1 zyxw 1"
         )
@@ -172,57 +195,15 @@ class Tomogram:
         return images
 
     def reconstruct_subvolume(
-        self, point_zyx: torch.Tensor, sidelength: int
-    ) -> torch.Tensor:
-        """Reconstruct a 3D patch at a location in the sample."""
-        # Use batched method and extract first result
-        patches = self.reconstruct_patches_batched(point_zyx, sidelength)
-        return patches[0]
-
-    def reconstruct_tomogram(
-        self, volume_shape: tuple[int, int, int], sidelength: int
-    ) -> torch.Tensor:
-        """Reconstruct the full tomogram by tiling reconstructed patches in 3D. """
-        d, h, w = volume_shape
-        r = sidelength // 2
-
-        # Setup grid points where patches will be reconstructed
-        z = torch.arange(start=r, end=d + r, step=sidelength, device=self.device) - d // 2
-        y = torch.arange(start=r, end=h + r, step=sidelength, device=self.device) - h // 2
-        x = torch.arange(start=r, end=w + r, step=sidelength, device=self.device) - w // 2
-
-        # Create grid of all positions: (n_z, n_y, n_x, 3)
-        grid_zyx = torch.stack(torch.meshgrid(z, y, x, indexing='ij'), dim=-1)
-        original_shape = grid_zyx.shape[:-1]  # (n_z, n_y, n_x)
-        grid_zyx = grid_zyx.reshape(-1, 3)  # (N, 3) where N = n_z * n_y * n_x
-        
-        # Reconstruct all patches at once
-        patches = self.reconstruct_patches_batched(
-            points_zyx=grid_zyx, 
-            sidelength=sidelength
-        )  # (N, sidelength, sidelength, sidelength)
-        
-        # Reshape back to grid structure: (n_z, n_y, n_x, sidelength, sidelength, sidelength)
-        patches = patches.reshape(*original_shape, sidelength, sidelength, sidelength)
-        
-        # Tile all patches into the full volume
-        tomogram = einops.rearrange(
-            patches,
-            'nz ny nx d h w -> (nz d) (ny h) (nx w)'
-        )
-        
-        # Crop to desired volume shape 
-        tomogram = tomogram[:d, :h, :w]
-        
-        return tomogram
-    
-    def reconstruct_patches_batched(
         self, points_zyx: torch.Tensor, sidelength: int
     ) -> torch.Tensor:
-        """Reconstruct multiple 3D patches simultaneously from 2D projections. """
+        """Reconstruct 3D patch(es) at location(s) in the sample.
+        
+        Rank-polymorphic: input (..., 3) -> output (..., d, h, w)
+        """
         points_zyx = torch.as_tensor(points_zyx, device=self.device).float()
-        if points_zyx.ndim == 1:
-            points_zyx = points_zyx.reshape(1, 3)
+        
+        points_zyx, ps = einops.pack([points_zyx], "* zyx")
         
         n_positions = points_zyx.shape[0]
         rotation_matrices = self.projection_matrices[:, :3, :3]
@@ -234,13 +215,17 @@ class Tomogram:
             points_zyx, sidelength=sidelength_padded, return_rfft=True
         )  # (n_positions, n_tilts, h, w_rfft)
         
+        # Apply fftshift on non-redundant dimension for central slice insertion
         particle_tilt_series_rfft = torch.fft.fftshift(
             particle_tilt_series_rfft, dim=(-2,)
         )  # (n_positions, n_tilts, h, w_rfft)
         
-        # Transpose to multichannel format: (n_tilts, n_positions, h, w_rfft)
+        # Rearrange to multichannel format: (n_tilts, n_positions, h, w_rfft)
         # where n_tilts is the batch dim and n_positions is the channel dim
-        particle_tilt_series_rfft = particle_tilt_series_rfft.transpose(0, 1)
+        particle_tilt_series_rfft = einops.rearrange(
+            particle_tilt_series_rfft, 
+            "n_positions n_tilts h w_rfft -> n_tilts n_positions h w_rfft"
+        )
         
         # Reconstruct all patches at once using multichannel insertion
         # Treat each patch as a separate "channel"
@@ -278,4 +263,84 @@ class Tomogram:
         p = (sidelength_padded - sidelength) // 2
         patches = F.pad(patches, [-p] * 6)
         
+        # Unpack to restore original input shape: (..., d, h, w)
+        [patches] = einops.unpack(patches, ps, "* d h w")
+        
         return patches
+
+    def reconstruct_tomogram(
+        self, volume_shape: tuple[int, int, int], sidelength: int, batch_size: int | None = None
+    ) -> torch.Tensor:
+        """Reconstruct the full tomogram by tiling reconstructed patches in 3D. """
+        d, h, w = volume_shape
+        r = sidelength // 2
+
+        # Setup grid points where patches will be reconstructed (in pixels)
+        z = torch.arange(start=r, end=d + r, step=sidelength, device=self.device) - d // 2
+        y = torch.arange(start=r, end=h + r, step=sidelength, device=self.device) - h // 2
+        x = torch.arange(start=r, end=w + r, step=sidelength, device=self.device) - w // 2
+
+        # Create grid of all center points of reconstructed patches/subvolumes
+        # Points are in pixels relative to volume center
+        centers_zyx = torch.stack(torch.meshgrid(z, y, x, indexing='ij'), dim=-1)  # (gd, gh, gw, 3)
+        
+        # Convert positions from pixels to Angstroms
+        centers_zyx_ang = centers_zyx * self.pixel_spacing
+        
+        # Reconstruct patches (optionally in batches)
+        if batch_size is None:
+            # Reconstruct all patches at once
+            # Input: (gd, gh, gw, 3) -> Output: (gd, gh, gw, d, h, w)
+            patches = self.reconstruct_subvolume(
+                points_zyx=centers_zyx_ang, 
+                sidelength=sidelength
+            )
+            # Tile all patches into the full volume
+            tomogram = einops.rearrange(
+                patches,
+                'gd gh gw d h w -> (gd d) (gh h) (gw w)'
+            )
+        else:
+            # reconstruct on GPU, accumulate on CPU
+            gd, gh, gw = centers_zyx.shape[:3]
+            tomogram_shape = (gd * sidelength, gh * sidelength, gw * sidelength)
+            # Allocate output volume on CPU
+            tomogram = torch.zeros(tomogram_shape, device='cpu', dtype=torch.float32)
+            
+            centers_flat, ps = einops.pack([centers_zyx_ang], "* zyx")
+            total_patches = centers_flat.shape[0]
+            
+            # Pre-compute all grid indices
+            patch_indices = torch.arange(total_patches)
+            iz_all = patch_indices // (gh * gw)
+            iy_all = (patch_indices % (gh * gw)) // gw
+            ix_all = patch_indices % gw
+            
+            # Process and tile patches in batches
+            batch_idx = 0
+            for chunk in centers_flat.split(batch_size):
+                # Reconstruct batch on GPU and transfer to CPU
+                patches_batch = self.reconstruct_subvolume(chunk, sidelength).cpu()
+                
+                # Place each patch in the output volume using pre-computed indices
+                for j in range(len(patches_batch)):
+                    idx = batch_idx + j
+                    iz, iy, ix = iz_all[idx], iy_all[idx], ix_all[idx]
+                    
+                    tomogram[
+                        iz*sidelength:(iz+1)*sidelength,
+                        iy*sidelength:(iy+1)*sidelength,
+                        ix*sidelength:(ix+1)*sidelength
+                    ] = patches_batch[j]
+                
+                batch_idx += len(patches_batch)
+                
+                # Free memory 
+                del patches_batch
+                if self.device != 'cpu':
+                    torch.cuda.empty_cache()
+        
+        # Crop to final volume shape 
+        tomogram = tomogram[:d, :h, :w]
+        
+        return tomogram

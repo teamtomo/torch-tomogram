@@ -24,6 +24,7 @@ def test_device_move():
         tilt_axis_angle=tilt_axis_angle,
         sample_translations=sample_translations,
         images=images,
+        pixel_spacing=1.0,
     )
     assert "cpu" == str(tomogram.images.device)
 
@@ -55,6 +56,7 @@ def test_projection_matrices(device):
         tilt_axis_angle=tilt_axis_angle,
         sample_translations=sample_translations,
         images=images,
+        pixel_spacing=1.0,
         device=device,
     )
 
@@ -85,6 +87,7 @@ def test_project_points(device):
         tilt_axis_angle=tilt_axis_angle,
         sample_translations=sample_translations,
         images=images,
+        pixel_spacing=1.0,
         device=device,
     )
 
@@ -127,6 +130,7 @@ def test_extract_particle_tilt_series(device):
         tilt_axis_angle=tilt_axis_angle,
         sample_translations=sample_translations,
         images=images,
+        pixel_spacing=1.0,
         device=device,
     )
 
@@ -172,6 +176,7 @@ def test_reconstruct_subvolume(device):
         tilt_axis_angle=tilt_axis_angle,
         sample_translations=sample_translations,
         images=images,
+        pixel_spacing=1.0,
         device=device,
     )
 
@@ -208,6 +213,7 @@ def test_reconstruct_tomogram(device):
         tilt_axis_angle=tilt_axis_angle,
         sample_translations=sample_translations,
         images=images,
+        pixel_spacing=1.0,
         device=device,
     )
 
@@ -218,3 +224,78 @@ def test_reconstruct_tomogram(device):
     assert volume.shape == (16, 16, 16)  # 16x16x16 volume
     assert volume.dtype == torch.float32
     assert device in str(volume.device)
+
+
+@pytest.mark.parametrize(
+    "device",
+    DEVICES,
+)
+def test_reconstruct_subvolume_rank_polymorphic(device):
+    """Test that reconstruct_subvolume handles different input shapes (rank-polymorphic)."""
+    tilt_angles = torch.tensor([-30.0, 0.0, 30.0])
+    tilt_axis_angle = torch.tensor(0.0)
+    sample_translations = torch.zeros((3, 2))
+    images = torch.zeros((3, 32, 32))
+    images[:, 14:18, 14:18] = 1.0
+    
+    # initialize tomogram
+    tomogram = Tomogram(
+        tilt_angles=tilt_angles,
+        tilt_axis_angle=tilt_axis_angle,
+        sample_translations=sample_translations,
+        images=images,
+        pixel_spacing=1.0,
+        device=device,
+    )
+    
+    # Test single point (3,) -> (d, h, w)
+    point = torch.tensor([0.0, 0.0, 0.0])
+    subvolume = tomogram.reconstruct_subvolume(point, sidelength=8)
+    assert subvolume.shape == (8, 8, 8)
+    
+    # Test batch (N, 3) -> (N, d, h, w)
+    points = torch.tensor([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]])
+    subvolumes = tomogram.reconstruct_subvolume(points, sidelength=8)
+    assert subvolumes.shape == (2, 8, 8, 8)
+    
+    # Test 2D grid (h, w, 3) -> (h, w, d, d, d)
+    grid_2d = torch.zeros(2, 3, 3)
+    subvolumes_grid = tomogram.reconstruct_subvolume(grid_2d, sidelength=8)
+    assert subvolumes_grid.shape == (2, 3, 8, 8, 8)
+
+
+@pytest.mark.parametrize(
+    "device",
+    DEVICES,
+)
+def test_reconstruct_tomogram_batch_size(device):
+    """Test that reconstruct_tomogram works with batch_size parameter."""
+    tilt_angles = torch.tensor([-30.0, 0.0, 30.0])
+    tilt_axis_angle = torch.tensor(0.0)
+    sample_translations = torch.zeros((3, 2))
+    images = torch.zeros((3, 32, 32))
+    images[:, 14:18, 14:18] = 1.0
+    
+    # initialize tomogram
+    tomogram = Tomogram(
+        tilt_angles=tilt_angles,
+        tilt_axis_angle=tilt_axis_angle,
+        sample_translations=sample_translations,
+        images=images,
+        pixel_spacing=1.0,
+        device=device,
+    )
+    
+    # Reconstruct without batch_size
+    recon_no_batch = tomogram.reconstruct_tomogram((16, 16, 16), sidelength=8)
+    
+    # Reconstruct with batch_size
+    recon_with_batch = tomogram.reconstruct_tomogram((16, 16, 16), sidelength=8, batch_size=2)
+    
+    # Both should produce same shape
+    assert recon_no_batch.shape == (16, 16, 16)
+    assert recon_with_batch.shape == (16, 16, 16)
+    
+    # Results should be very similar 
+    diff = torch.abs(recon_no_batch - recon_with_batch.to(recon_no_batch.device)).max()
+    assert diff == 0.0

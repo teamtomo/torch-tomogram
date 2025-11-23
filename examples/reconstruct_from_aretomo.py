@@ -1,3 +1,4 @@
+import alnfile
 import mrcfile
 import torch
 from pathlib import Path
@@ -11,15 +12,17 @@ TILT_STACK_PATH = Path("/path/to/your/tilt_stack.mrc")
 # Choose device
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Optional: Pixel spacing in Angstroms
+# Pixel spacing in Angstroms (required)
 # AreTomo .aln files contain shifts in pixels, this converts them to Angstroms
-# If None, shifts remain in pixels
 PIXEL_SPACING = 6.192
 
-# Load tilt series
-tilt_series = Tomogram.from_aretomo_aln(
-    aln_path=ALN_PATH,
-    tilt_stack_path=TILT_STACK_PATH,
+# Read AreTomo alignment data and add tilt stack path to dataframe
+df = alnfile.read(ALN_PATH)
+df['image_path'] = str(TILT_STACK_PATH)
+
+# Load tilt series from dataframe
+tilt_series = Tomogram.from_aretomo_output(
+    df=df,
     pixel_spacing=PIXEL_SPACING,
     device=DEVICE,
 )
@@ -35,5 +38,5 @@ mrcfile.write(
     output_path,
     tomogram.cpu().numpy(),
     overwrite=True,
-    voxel_size=10,
+    voxel_size=PIXEL_SPACING,
 )

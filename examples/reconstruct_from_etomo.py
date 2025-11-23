@@ -1,3 +1,4 @@
+import etomofiles
 import mrcfile
 import torch
 from pathlib import Path
@@ -10,18 +11,24 @@ ETOMO_DIR = Path("/path/to/etomo/dir")
 # Choose device: "cpu" or "cuda" 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Optional: Pixel spacing in Angstroms
-# If provided, shifts from alignment will be stored in Angstroms
-# If None, shifts remain in pixels 
+# Pixel spacing in Angstroms (required)
 PIXEL_SPACING = 6.192
 
-# Load tilt series
+# Read ETOMO alignment data
+df = etomofiles.read(ETOMO_DIR)
+
+# Update image paths to be relative to current working directory (or absolute)
+# etomofiles returns paths relative to the etomo directory
+df['image_path'] = df['image_path'].apply(
+    lambda p: str(ETOMO_DIR / p.split('[')[0]) + '[' + p.split('[')[1]
+)
+
+# Load tilt series from dataframe
 tilt_series = Tomogram.from_etomo_directory(
-    etomo_dir=ETOMO_DIR,
+    df=df,
     pixel_spacing=PIXEL_SPACING,
     device=DEVICE,
 )
-
 
 # Reconstruct tomogram
 volume_shape = (512, 512, 512)
@@ -34,6 +41,6 @@ mrcfile.write(
     output_path,
     tomogram.cpu().numpy(),
     overwrite=True,
-    voxel_size=10,
+    voxel_size=PIXEL_SPACING,
 )
 
